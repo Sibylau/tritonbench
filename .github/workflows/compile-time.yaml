@@ -35,7 +35,7 @@ jobs:
   h100-triton-main-compile-time-benchmark:
     uses: ./.github/workflows/_linux-benchmark-h100.yml
     with:
-      conda_env: "triton-main"
+      test_type: ${{ inputs.test_type }}
       benchmark_name: "compile_time"
       side_a_triton: ${{ inputs.side_a_triton }}
       side_a_commit: ${{ inputs.side_a_commit }}
