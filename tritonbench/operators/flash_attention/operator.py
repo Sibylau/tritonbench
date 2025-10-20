@@ -34,7 +34,6 @@ It benchmarks the following FMHA kernels:
 import argparse
 import os
 from contextlib import nullcontext
-from itertools import chain
 
 from typing import Callable, Optional
 
@@ -60,6 +59,13 @@ from tritonbench.utils.env_utils import get_nvidia_gpu_model, is_cuda, is_hip
 from tritonbench.utils.path_utils import add_ld_library_path
 from tritonbench.utils.python_utils import try_import
 from tritonbench.utils.triton_op import is_fbcode
+
+from .generate_inputs import (
+    additional_inputs,
+    ragged_inputs,
+    standard_inputs,
+    sweep_inputs,
+)
 
 
 # [Optional] flash_attn v2
@@ -146,10 +152,16 @@ def parse_op_args(args: List[str]):
         "--pt2-sdpa", action="store_true", help="Compile SDPA with PT2."
     )
     parser.add_argument(
-        "--additional-inputs", action="store_true", help="enable additional inputs"
-    )
-    parser.add_argument(
-        "--ragged-shapes", action="store_true", help="enable additional inputs"
+        "--input-types",
+        type=str,
+        default="STANDARD_SHAPES",
+        choices=(
+            "STANDARD_SHAPES",
+            "RAGGED_SHAPES",
+            "ADDITIONAL_SHAPES",
+            "SWEEP_SHAPES",
+        ),
+        help="specify input types",
     )
     return parser.parse_args(args)
 
@@ -173,10 +185,9 @@ class Operator(BenchmarkOperator):
         self.causal = args.causal
         self.native_sdpa = args.native_sdpa
         self.pt2_sdpa = args.pt2_sdpa
-        self.additional_inputs = args.additional_inputs
-        self.ragged_shapes = args.ragged_shapes
         # Use standard scale factor: 1/sqrt(head_dim)
         self.sm_scale = 1.0 / (self.D_HEAD**0.5)
+        self.input_types = args.input_types
 
     @register_benchmark(baseline=True)
     def aten(
@@ -236,7 +247,7 @@ class Operator(BenchmarkOperator):
             v,
         )
 
-    @register_benchmark(enabled=HAS_FLASH_V2)
+    @register_benchmark(enabled=HAS_FLASH_V2)  # noqa
     def flash_v2(
         self,
         q: torch.Tensor,
@@ -287,7 +298,7 @@ class Operator(BenchmarkOperator):
         return fhma_input
 
     # Cutlass implementation is not supported on AMD GPUs.
-    @register_benchmark(enabled=HAS_XFORMERS and not is_hip())
+    @register_benchmark(enabled=HAS_XFORMERS and not is_hip())  # noqa
     def xformers(
         self,
         q: torch.Tensor,
@@ -301,7 +312,7 @@ class Operator(BenchmarkOperator):
             fhma_input, needs_gradient=need_gradient
         )
 
-    @register_benchmark(enabled=HAS_XFORMERS, fwd_only=True)
+    @register_benchmark(enabled=HAS_XFORMERS, fwd_only=True)  # noqa
     def xformers_splitk(
         self,
         q: torch.Tensor,
@@ -380,7 +391,7 @@ class Operator(BenchmarkOperator):
 
     if not IS_B200:
 
-        @register_benchmark(enabled=HAS_FLASH_V3)
+        @register_benchmark(enabled=HAS_FLASH_V3)  # noqa
         def flash_v3(
             self,
             q: torch.Tensor,
@@ -430,7 +441,7 @@ class Operator(BenchmarkOperator):
                 q, k, v, self.causal, self.sm_scale, "tma_ws_persistent"
             )
 
-        @register_benchmark(enabled=not is_fbcode() and HAS_TK)
+        @register_benchmark(enabled=not is_fbcode() and HAS_TK)  # noqa
         def tk(self, q, k, v):
             def _inner():
                 out = tk_attn(q, k, v, self.causal)
@@ -438,7 +449,7 @@ class Operator(BenchmarkOperator):
 
             return _inner
 
-        @register_benchmark(enabled=HAS_PALLAS)
+        @register_benchmark(enabled=HAS_PALLAS)  # noqa
         def pallas(self, q, k, v):
             q = torch_to_jax_tensor(q)
             k = torch_to_jax_tensor(k)
@@ -450,7 +461,7 @@ class Operator(BenchmarkOperator):
 
             return _inner
 
-        @register_benchmark(enabled=HAS_TILELANG)
+        @register_benchmark(enabled=HAS_TILELANG)  # noqa
         def tile(self, q, k, v):
             # [B, H, S, D] -> [B, S, H, D]
             q = q.transpose(1, 2).contiguous()
@@ -558,95 +569,29 @@ class Operator(BenchmarkOperator):
         return fn
 
     def get_input_iter(self) -> Generator:
-        D_HEAD = self.D_HEAD
-        BATCH = self.BATCH
-        H = self.H
-        SEQ_LEN_LOG2 = 7
-
-        def get_ctx_vals():
-            if self.SEQ_LEN:
-                SEQ_LEN = self.SEQ_LEN
-                SEQ_LEN_KV = self.SEQ_LEN_KV
-                if self.tb_args.num_inputs is None:
-                    yield (BATCH, H, SEQ_LEN, SEQ_LEN_KV, D_HEAD)
-                else:
-                    for _i in range(self.tb_args.num_inputs):
-                        yield (BATCH, self.H, SEQ_LEN, SEQ_LEN_KV, self.D_HEAD)
-                        SEQ_LEN *= 2
-                return
-            for i in range(SEQ_LEN_LOG2, 14):
-                N_CTX = 2**i
-                # BATCH = 16384 // N_CTX
-                # H = 2048 // D_HEAD
-                yield (BATCH, H, N_CTX, N_CTX, D_HEAD)
-
-        ctx_vals = get_ctx_vals()
-
-        if self.ragged_shapes:
-            shapes = self.__ragged_shapes()
-        elif self.additional_inputs:
-            shapes = self.__additional_example_input(ctx_vals)
+        if self.input_types == "RAGGED_SHAPES":
+            return ragged_inputs(self.dtype, self.device)
+        elif self.input_types == "ADDITIONAL_SHAPES":
+            return additional_inputs(
+                shape=(self.BATCH, self.H, self.SEQ_LEN, self.SEQ_LEN_KV, self.D_HEAD),
+                num_inputs=self.tb_args.num_inputs,
+                dtype=self.dtype,
+                device=self.device,
+                add_production_shapes=self.add_production_shapes,
+                name=self.name,
+                shuffle_shapes=self.tb_args.shuffle_shapes,
+            )
+        elif self.input_types == "STANDARD_SHAPES":
+            return standard_inputs(
+                shape=(self.BATCH, self.H, self.SEQ_LEN, self.SEQ_LEN_KV, self.D_HEAD),
+                num_inputs=self.tb_args.num_inputs,
+                dtype=self.dtype,
+                device=self.device,
+            )
+        elif self.input_types == "SWEEP_SHAPES":
+            return sweep_inputs(self.dtype, self.device)
         else:
-            shapes = ctx_vals
-        requires_grad = True
-        for shape in shapes:
-            if len(shape) == 5:
-                BATCH, H, N_CTX, N_CTX_KV, D_HEAD = shape
-            else:
-                BATCH, H, N_CTX, D_HEAD = shape
-                N_CTX_KV = N_CTX
-            q = torch.randn(
-                (BATCH, H, N_CTX, D_HEAD),
-                dtype=self.dtype,
-                device=self.device,
-                requires_grad=requires_grad,
-            )
-            k = torch.randn(
-                (BATCH, H, N_CTX_KV, D_HEAD),
-                dtype=self.dtype,
-                device=self.device,
-                requires_grad=requires_grad,
-            )
-            v = torch.randn(
-                (BATCH, H, N_CTX_KV, D_HEAD),
-                dtype=self.dtype,
-                device=self.device,
-                requires_grad=requires_grad,
-            )
-            self.N_CTX = N_CTX
-            yield (q, k, v)
-
-    def __additional_example_input(self, standard_shapes: Generator) -> Generator:
-        llama_shapes = [
-            (4, 32, 19, 128),
-            (4, 32, 1, 128),
-            # currently we are only able to use the same shape for q, k, v but in prod q shape is (4, 32, 1, 128) here
-            (4, 32, 511, 128),
-        ]
-        shapes = chain(standard_shapes, llama_shapes)
-        if self.add_production_shapes:
-            from ...utils.fb.durin_data import productionDataLoader
-
-            shapes = chain(
-                shapes,
-                productionDataLoader.get_shapes_from_frozen_durin(
-                    self.name, "attention", shuffle_shapes=self.tb_args.shuffle_shapes
-                ),
-            )
-        return shapes
-
-    def __ragged_shapes(self) -> Generator:
-        additional_shapes = [
-            (1024, 4, 1024, 128),
-            (256, 4, 256, 128),
-            (256, 4, 512, 128),
-            (256, 4, 1024, 128),
-            (256, 4, 2048, 128),
-            (256, 4, 4096, 128),
-            (256, 4, 8192, 128),
-            (256, 4, 16384, 128),
-        ]
-        return chain(additional_shapes)
+            raise AssertionError(f"Unknown input type {self.input_types}")
 
     @register_x_val(label="(Batch, Heads, SeqLen, SeqLen_KV, Dhead)")
     def get_x_val(self, example_inputs) -> float:
