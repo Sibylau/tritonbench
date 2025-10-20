@@ -7,6 +7,8 @@ disabled:
   - fp8_gemm_fwd
   - fp8_gemm_rowwise_fwd
   - fp8_gemm_rowwise_grouped_fwd
+  # FB-Only kernel
+  - fp8_fused_quant_gemm_rowwise_fwd
 enabled:
   launch_latency:
     op: launch_latency

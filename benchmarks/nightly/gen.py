@@ -7,7 +7,7 @@ import yaml
 
 REPO_PATH = Path(os.path.abspath(__file__)).parent.parent.parent
 
-METADATA_PATH = REPO_PATH.joinpath("benchmarks/gen_metadata/metadata")
+METADATA_PATH = REPO_PATH.joinpath("tritonbench/metadata/")
 CURRENT_PATH = Path(os.path.abspath(__file__)).parent
 OUTPUT_PATH = CURRENT_PATH.joinpath("autogen.yaml")
 
@@ -18,7 +18,8 @@ def get_metadata(name: str, path: Path = METADATA_PATH) -> Any:
         return yaml.safe_load(f)
 
 
-TRITON_OPS = get_metadata("triton_operators")
+TRITON_OPS = get_metadata("oss_triton_operators")["triton_ops"]
+TRITON_OPS.update(get_metadata("oss_triton_operators")["oss_only"])
 DTYPE_OPS = get_metadata("dtype_operators")
 TFLOPS_OPS = get_metadata("tflops_operators")
 BASELINE_OPS = get_metadata("baseline_operators")
