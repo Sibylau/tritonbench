@@ -108,7 +108,7 @@ def parse_op_args(args: List[str]):
         "--max-autotune", action="store_true", help="Whether to enable max autotune"
     )
     parser.add_argument(
-        "--sliding-window-size", type=int, default=128, help="sliding window size"
+        "--sliding-window-size", type=int, default=4096, help="sliding window size"
     )
     parser.add_argument("--prefix-length", type=int, default=128, help="prefix length")
     parser.add_argument(
