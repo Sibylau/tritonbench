@@ -184,10 +184,10 @@ if __name__ == "__main__":
     if args.fa2:
         logger.info("[tritonbench] installing fa2 from source...")
         install_fa2(compile=True)
-    if args.jax or args.all:
+    if args.jax:
         logger.info("[tritonbench] installing jax...")
         install_jax()
-    if args.tk or args.all:
+    if args.tk:
         logger.info("[tritonbench] installing thunderkittens...")
         from tools.tk.install import install_tk
 

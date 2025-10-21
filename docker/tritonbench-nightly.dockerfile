@@ -33,6 +33,7 @@ RUN cd /workspace/pytorch-ci; wget https://raw.githubusercontent.com/pytorch/pyt
     wget https://raw.githubusercontent.com/pytorch/pytorch/main/.ci/docker/common/install_cusparselt.sh && \
     mkdir ci_commit_pins && cd ci_commit_pins && \
     wget https://raw.githubusercontent.com/pytorch/pytorch/main/.ci/docker/ci_commit_pins/nccl-cu12.txt
+
 RUN sudo bash -c "set -x;export OVERRIDE_GENCODE=\"${OVERRIDE_GENCODE}\" OVERRIDE_GENCODE_CUDNN=\"${OVERRIDE_GENCODE_CUDNN}\"; cd /workspace/pytorch-ci; bash install_cuda.sh 12.8"
 
 # Checkout TritonBench and submodules
@@ -82,10 +83,6 @@ RUN cd /workspace/tritonbench && \
         python -m tools.cuda_utils --check-torch-nightly-version --force-date "${FORCE_DATE}"; \
     fi
 
-# Tritonbench library build and test require libcuda.so.1
-# which is from NVIDIA driver
-RUN sudo apt update && sudo apt-get install -y libnvidia-compute-550
-
 # Workaround: installing Ninja from setup.py hits "Failed to decode METADATA with UTF-8" error
 RUN . ${SETUP_SCRIPT} && pip install ninja
 
@@ -96,9 +93,6 @@ RUN cd /workspace/tritonbench && \
 # Install Tritonbench
 RUN cd /workspace/tritonbench && \
     bash .ci/tritonbench/install.sh
-
-# Remove NVIDIA driver library - they are supposed to be mapped at runtime
-RUN sudo apt-get purge -y libnvidia-compute-550
 
 # Build triton-main conda env
 RUN cd /workspace/tritonbench && \

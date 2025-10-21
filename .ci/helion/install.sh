@@ -24,7 +24,7 @@ if [ -z "${SETUP_SCRIPT}" ]; then
 fi
 
 # Validate arguments
-if [ -z "${CONDA_ENV}" ]  then
+if [ -z "${CONDA_ENV}" ];  then
     echo "Missing required arguments: CONDA_ENV."
     usage
 fi
