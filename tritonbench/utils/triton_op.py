@@ -33,9 +33,10 @@ from torch.utils._pytree import tree_map
 from tritonbench.components.do_bench import do_bench_wrapper, Latency
 from tritonbench.components.export import export_data
 
-from tritonbench.components.power.chart import power_chart_begin, power_chart_end
+from tritonbench.components.power import PowerManagerTask
 from tritonbench.data import SUPPORTED_INPUT_OPS
 from tritonbench.utils.constants import (
+    DEFAULT_POWER_REPCNT,
     DEFAULT_QUANTILES,
     DEFAULT_REP,
     DEFAULT_SLEEP,
@@ -158,6 +159,10 @@ def do_bench_walltime(fn, warmup=25, rep=DEFAULT_REP):
     end_time = time.perf_counter()
     wall_time_ms = (end_time - start_time) * 1e3 / n_repeat
     return wall_time_ms
+
+
+def _get_current_device_id() -> int:
+    return torch.cuda.current_device()
 
 
 def gemm_shapes(prefill: bool = False):
@@ -990,9 +995,16 @@ class BenchmarkOperator(metaclass=PostInitProcessor):
         sleep=DEFAULT_SLEEP,
     ) -> None:
         """Benchmarking the operator and returning its metrics."""
-        metrics = []
+        metrics: list[tuple[Any, dict[str, BenchmarkOperatorMetrics]]] = []
         if self.tb_args.power_chart:
-            power_chart_begin(self.benchmark_name, self.tb_args.power_chart)
+            power_manager_task = PowerManagerTask.create(
+                self.benchmark_name,
+                _get_current_device_id(),
+                self.tb_args.output_dir,
+            )
+            power_manager_task.start()
+            if not self.tb_args.repcnt:
+                self.tb_args.repcnt = DEFAULT_POWER_REPCNT
         try:
             if "proton" in self.required_metrics:
                 import triton.profiler as proton
@@ -1119,6 +1131,7 @@ class BenchmarkOperator(metaclass=PostInitProcessor):
                         fn_name=bm_name,
                         warmup=warmup,
                         rep=rep,
+                        repcnt=self.tb_args.repcnt,
                         quantiles=quantiles,
                         baseline=baseline,
                     )
@@ -1135,8 +1148,8 @@ class BenchmarkOperator(metaclass=PostInitProcessor):
                 y_vals: Dict[str, BenchmarkOperatorMetrics] = functools.reduce(
                     _reduce_benchmarks, benchmarks, {}
                 )
-                self._cur_backend_name = None
                 metrics.append((x_val, y_vals))
+                self._cur_backend_name = None
                 del self.example_inputs  # save some memory
                 if "proton" in self.required_metrics:
                     proton.activate(self._proton_session_id)
@@ -1166,9 +1179,7 @@ class BenchmarkOperator(metaclass=PostInitProcessor):
                 os._exit(1)
             raise
         finally:
-            if self.tb_args.power_chart:
-                power_chart_end()
-            self.output = BenchmarkOperatorResult(
+            result = BenchmarkOperatorResult(
                 benchmark_name=self.tb_args.benchmark_name,
                 op_name=self.name,
                 op_mode=self.mode.value,
@@ -1176,6 +1187,10 @@ class BenchmarkOperator(metaclass=PostInitProcessor):
                 simple_mode=self.tb_args.simple_output,
                 result=metrics,
             )
+            if self.tb_args.power_chart:
+                power_manager_task.stop()
+                power_manager_task.finalize(result)
+            self.output = result
 
     def get_x_val(self, example_inputs) -> Any:
         return self._cur_input_id
@@ -1571,6 +1586,7 @@ class BenchmarkOperator(metaclass=PostInitProcessor):
         fn_name: str,
         warmup=DEFAULT_WARMUP,
         rep=DEFAULT_REP,
+        repcnt=None,
         quantiles=DEFAULT_QUANTILES,
         baseline: bool = False,
     ) -> BenchmarkOperatorMetrics:
@@ -1603,6 +1619,7 @@ class BenchmarkOperator(metaclass=PostInitProcessor):
                     fn,
                     warmup,
                     rep,
+                    repcnt,
                     grad_to_none=self.get_grad_to_none(self.example_inputs),
                     device=self.device,
                     use_cuda_graphs=self.use_cuda_graphs,
