@@ -328,7 +328,8 @@ class AttentionConfig:
             self.num_kv_buffers = gl.constexpr(4 if HEAD_DIM == 128 else 8)
 
         self.use_fadd2_reduce = gl.constexpr(HEAD_DIM == 64)
-        self.use_exp2_turnstile = gl.constexpr(HEAD_DIM == 64)
+        # self.use_exp2_turnstile = gl.constexpr(HEAD_DIM == 64)
+        self.use_exp2_turnstile = gl.constexpr(False)
         self.use_ffma2_scale_rowmax = gl.constexpr(
             HEAD_DIM == 128 or is_fp16 == (STAGE == 3)
         )
