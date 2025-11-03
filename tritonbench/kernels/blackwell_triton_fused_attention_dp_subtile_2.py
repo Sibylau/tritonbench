@@ -80,7 +80,19 @@ def _attn_fwd_subtile(
             qk = _fma_f32x2(qk, qk_scale, -m_ij[:, None])
         else:
             qk = qk * qk_scale - m_ij[:, None]
-    p = tl.math.exp2(qk)
+    # p = tl.math.exp2(qk)
+    PM: tl.constexpr = qk.shape[0]
+    PN: tl.constexpr = qk.shape[1]
+    qk0, qk1 = qk.reshape([PM, 2, PN // 2]).permute(0, 2, 1).split()
+
+    p0 = tl.math.exp2(qk0)
+    p0_bf16 = p0.to(dtype)
+    p1 = tl.math.exp2(qk1)
+    p1_bf16 = p1.to(dtype)
+
+    p = tl.join(p0, p1).permute(0, 2, 1).reshape([PM, PN])
+    p_bf16 = tl.join(p0_bf16, p1_bf16).permute(0, 2, 1).reshape([PM, PN])
+
     # -- compute correction factor
     alpha = tl.math.exp2(m_i - m_ij)
     if not FADD2_REDUCE:
@@ -104,8 +116,8 @@ def _attn_fwd_subtile(
 
     # update m_i and l_i
     # place this at the end of the loop to reduce register pressure
-    PM: tl.constexpr = p.shape[0]
-    PN: tl.constexpr = p.shape[1]
+    # PM: tl.constexpr = p.shape[0]
+    # PN: tl.constexpr = p.shape[1]
     if FADD2_REDUCE:
         p0, p1 = p.reshape([PM, 2, PN // 2]).permute(0, 2, 1).split()
         l_ij0, l_ij1 = tl.reduce((p0, p1), axis=1, combine_fn=_reduce_fadd2)
@@ -115,9 +127,9 @@ def _attn_fwd_subtile(
     # We can potentially move these to be before updating l_ij, so the dot
     # is not blocked.
     # prepare p and v for the dot
-    p = p.to(dtype)
+    # p = p.to(dtype)
     # note that this non transposed v for FP8 is only supported on Blackwell
-    acc = tl.dot(p, v, acc)
+    acc = tl.dot(p_bf16, v, acc)
     if not FADD2_REDUCE:
         l_i0 = l_i0 * alpha + l_ij
     m_i = m_ij
@@ -283,6 +295,7 @@ else:
             "num_stages": s,
             "num_warps": w,
             "pre_hook": _host_descriptor_pre_hook,
+            "ir_override": f"/home/jieeliu/workspace/tritonbench/ir/v1_subtile_p_reorder.ttgir"
         }
 
         # Only add minRegAutoWS/maxRegAutoWS if supported (triton/tree/ws-3.5)
