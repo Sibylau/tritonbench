@@ -89,7 +89,7 @@ def get_run_env(
     return run_env
 
 
-def run_in_helion(op: str, op_args: Dict[str, str], extra_envs: Dict[str, str]):
+def run_in_helion(op_args: Dict[str, str], extra_envs: Dict[str, str]):
     HELION_PATH = REPO_PATH.joinpath(".install", "helion")
     assert HELION_PATH.exists(), f"Helion path {HELION_PATH} must exist. Run python install.py --helion to install Helion."
     environ = os.environ.copy()
@@ -270,7 +270,7 @@ def run_config(config_file: str, args: List[str]):
         config = yaml.safe_load(fp)
     for benchmark_name in config:
         benchmark_config = config[benchmark_name]
-        op_name = benchmark_config["op"]
+        runner = benchmark_config.get("runner", None)
         op_args = benchmark_config["args"].split(" ") + args
         env_string = benchmark_config.get("envs", None)
         extra_envs = {}
@@ -282,9 +282,10 @@ def run_config(config_file: str, args: List[str]):
         if disabled:
             logger.info(f"Skipping disabled benchmark {benchmark_name}.")
             continue
-        if benchmark_config.get("runner", None) == "helion":
-            run_in_helion(op_name, op_args, extra_envs)
+        if runner == "helion":
+            run_in_helion(op_args, extra_envs)
         else:
+            op_name = benchmark_config["op"]
             run_in_task(
                 op=op_name,
                 op_args=op_args,
@@ -363,8 +364,11 @@ def run_in_task(
         sys.exit(1)
 
 
-def setup_output_dir(bm_name: str):
+def setup_output_dir(bm_name: str, ci: bool = False):
     current_timestamp = datetime.fromtimestamp(time.time()).strftime("%Y%m%d%H%M%S")
     output_dir = BENCHMARKS_OUTPUT_DIR.joinpath(bm_name, f"run-{current_timestamp}")
     Path.mkdir(output_dir, parents=True, exist_ok=True)
+    # set writable permission for all users (used by the ci env)
+    if ci:
+        output_dir.chmod(0o777)
     return current_timestamp, output_dir.absolute()

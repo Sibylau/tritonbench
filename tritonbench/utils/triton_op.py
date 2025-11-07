@@ -19,7 +19,6 @@ import types
 from collections import defaultdict, OrderedDict
 from dataclasses import asdict, dataclass, fields
 from enum import Enum
-from itertools import product
 from numbers import Number
 from pathlib import Path
 from typing import Any, Callable, Dict, Generator, List, Optional, Tuple, Union
@@ -188,27 +187,6 @@ def gemm_shapes(prefill: bool = False):
     from .fb.fp8_gemm_rowwise_shapes import read_shapes_for_fp8_gemm_rowwise
 
     return read_shapes_for_fp8_gemm_rowwise(prefill)
-
-
-def llama_shapes():
-    # batch sizes * seq lengths
-    BS = [2**i for i in range(0, 17)]
-    # attn: wqkv, wo; ffn: w13, w2
-    KN = [
-        (4096, 12288),
-        (4096, 4096),
-        (4096, 22016),
-        (11008, 4096),
-        (8192, 1280),
-        (1024, 8192),
-        (8192, 7168),
-        (3584, 8192),
-        (16384, 2304),
-        (2048, 16384),
-        (16384, 13312),
-        (6656, 16384),
-    ]
-    return [(bs, n, k, None) for bs, (k, n) in product(BS, KN)]
 
 
 def _split_params_by_comma(params: Optional[str]) -> List[str]:
@@ -810,7 +788,7 @@ class BenchmarkOperator(metaclass=PostInitProcessor):
         if self.tb_args.input_loader:
             self.get_input_iter = get_input_loader(self, self.tb_args.input_loader)
         # Count total available inputs directly
-        self._available_num_inputs = sum(1 for _ in self.get_input_iter())
+        self._available_num_inputs = self.get_available_num_inputs()
 
         # Check if multiple IDs are specified explicitly
         if len(self._input_ids) > 1:
@@ -891,6 +869,9 @@ class BenchmarkOperator(metaclass=PostInitProcessor):
             f"Input IDs to run: {self._input_ids}",
         )
 
+    def get_backend(self, bm_func_name: str):
+        return REGISTERED_BENCHMARKS[self.name][bm_func_name]
+
     def _get_bm_func(self, bm_func_name: str):
         fwd_fn_lambda = getattr(self, bm_func_name, None)
         assert callable(fwd_fn_lambda), (
@@ -956,7 +937,7 @@ class BenchmarkOperator(metaclass=PostInitProcessor):
             self, BenchmarkOperator
         )
         self.input_iter = input_iter
-        self._available_num_inputs = sum(1 for _ in self.get_input_iter())
+        self._available_num_inputs = self.get_available_num_inputs()
         self._num_inputs = self._available_num_inputs - len(self._input_ids)
         self._input_ids = [i for i in range(0, self._num_inputs)]
 
@@ -1240,6 +1221,10 @@ class BenchmarkOperator(metaclass=PostInitProcessor):
         """Return the dynamic input iterator for the model."""
         logger.warning("Each operator must implement its own input iterator.")
         return []
+
+    def get_available_num_inputs(self) -> int:
+        """Return the number of inputs for the model."""
+        return sum(1 for _ in self.get_input_iter())
 
     def get_grad_to_none(self, args):
         return None
