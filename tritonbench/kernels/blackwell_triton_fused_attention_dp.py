@@ -309,7 +309,7 @@ if is_tile_enabled():
         for BN in [64, 128]
         for occ in [1, 2]
         for subtile in [True]
-        for subtile_p in [False]
+        for subtile_p in [True]
         for vectmul in [0]
         for add2reduce in [False]
     ]
@@ -348,7 +348,7 @@ else:
         for s in NUM_STAGES_OPTIONS
         for w in [4]
         for subtile in [True]
-        for subtile_p in [False]
+        for subtile_p in [True]
         for vectmul in [1]
         for add2reduce in [False]
         for maxreg in [152, 192]
